@@ -15,6 +15,51 @@ Opens at `http://localhost:5173`. Demo data seeds automatically — log in as
 any of the sample users (no password) to try all three roles. Everything
 except the AI buttons works with zero configuration.
 
+## Turning on real admin/technician passwords
+
+Right now Adrian, Mike, and Sarah's accounts have no password until you add
+one — the login screen will tell them so if they try. Each account's
+password is a separate Vercel environment variable, set the exact same way
+you set `OPENAI_API_KEY`:
+
+1. In the Vercel dashboard → your project → **Settings → Environment
+   Variables**, add these three (Production checked at least):
+
+   | Key | Value |
+   |---|---|
+   | `AUTH_HASH_ADMIN` | `11cc62471ad4dbacd1c1bf48f8fa9488:c956e83ee6ca84f73f0598be2624179fea3a28928cbbe67526f851639de0f54af42e959c5e62a98b021adcbd928b668f185124eaad6e3ab0368981354ff8036e` |
+   | `AUTH_HASH_TECH1` | `f4b2eab71c762a1638428e728edf011c:bb5b25aded186927a44316fbed051f974de4cb43bd1a4548509f7792404a8d8e6982d8cde6c8fc2793f94cdff4e10c1368aaf2ebb137097bee644cfcc5da629a` |
+   | `AUTH_HASH_TECH2` | `e6792f3809013519c87ced5825e8a146:4a1bfbe6ed221f5d7481429f6c87f35754ecdd8feeaa8c6680bac1bb2debd18a17fb067d91e2f6df978d389426297657793db751eb79a256f7d73d528456c765` |
+   | `SESSION_SECRET` | `b14707eadb92d7982e8929c930e69d80cd2f56fa82d5c0abea4c6e890d51b56a` |
+
+   Those hash values correspond to these starting passwords — change them
+   as soon as you're set up (see below):
+   - **Adrian (admin):** `Ab2telah`
+   - **Mike (tech1):** `Tech1`
+   - **Sarah (tech2):** `Tech2`
+
+2. Redeploy so the new variables take effect (same **Deployments → ⋯ →
+   Redeploy** step you used for the AI key).
+3. Customers still just click their name to log in — no password. Adrian
+   and technicians now get a password field on the login screen.
+
+**To change someone's password:** generate a new hash and paste it in as
+the same variable's value, then redeploy. Run this from the project folder
+(or ask Claude to run it for you and hand you the value):
+
+```
+node -e "const c=require('crypto');const s=c.randomBytes(16);const h=c.scryptSync(process.argv[1],s,64);console.log(s.toString('hex')+':'+h.toString('hex'))" "the-new-password"
+```
+
+**To revoke someone's access** (temporarily or permanently): set their
+variable's value to the literal text `REVOKED` and redeploy. This logs
+them out immediately — even a device that's already signed in gets kicked
+on its next check. To restore access, paste their hash back in (or
+generate a new one) and redeploy.
+
+Only you have Vercel dashboard access, so this is the entire admin-control
+surface — nobody else can issue, change, or revoke a password.
+
 ## Turning on AI (requires your OpenAI key)
 
 Your key must never be pasted into the app or committed to git — it lives
