@@ -1,6 +1,11 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { storageGet, storageSet } from "./lib/storage.js";
 import { callAI, checkAIConfigured } from "./lib/ai.js";
+import { loginWithPassword, verifySession } from "./lib/auth.js";
+
+// Roles that require a real password (checked server-side in /api/auth).
+// Customers are intentionally excluded — they keep the simple demo flow.
+const PASSWORD_PROTECTED_ROLES = ["admin", "technician"];
 
 /* ============================================================================
    HONEST ABES SERVICE HUB — ZERO-COST-FIRST BUILD
@@ -424,16 +429,49 @@ const inputStyle = {
 ------------------------------------------------------------------------- */
 function Login({ users, onLogin }) {
   const [selected, setSelected] = useState(null);
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [checking, setChecking] = useState(false);
   const grouped = {
     admin: users.filter((u) => u.role === "admin"),
     technician: users.filter((u) => u.role === "technician"),
     customer: users.filter((u) => u.role === "customer"),
   };
+
+  const needsPassword = selected && PASSWORD_PROTECTED_ROLES.includes(selected.role);
+
+  function selectUser(u) {
+    setSelected(u);
+    setPassword("");
+    setError("");
+  }
+
+  async function handleContinue() {
+    if (!selected) return;
+    if (!needsPassword) {
+      onLogin(selected, null);
+      return;
+    }
+    if (!password) {
+      setError("Enter your password.");
+      return;
+    }
+    setChecking(true);
+    setError("");
+    const result = await loginWithPassword(selected.id, password);
+    setChecking(false);
+    if (result.ok) {
+      onLogin(selected, result.token);
+    } else {
+      setError(result.error || "Incorrect password.");
+    }
+  }
+
   return (
     <div className="fb" style={{ minHeight: "100vh", background: C.ink, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <div style={{ width: "100%", maxWidth: 440 }}>
         <div style={{ textAlign: "center", marginBottom: 28 }}>
-          <div className="stamp" style={{ color: C.orange, fontSize: 13, marginBottom: 10 }}>Demo Mode — No Password Needed</div>
+          <div className="stamp" style={{ color: C.orange, fontSize: 13, marginBottom: 10 }}>Admin &amp; Technician Sign-In Required</div>
           <h1 className="fd" style={{ color: C.paper, fontSize: 40, fontWeight: 800, margin: "6px 0 2px", lineHeight: 1 }}>
             Honest Abes
           </h1>
@@ -452,7 +490,7 @@ function Login({ users, onLogin }) {
                 {grouped[role].map((u) => (
                   <button
                     key={u.id}
-                    onClick={() => setSelected(u)}
+                    onClick={() => selectUser(u)}
                     className="fb"
                     style={{
                       textAlign: "left", padding: "10px 12px", borderRadius: 9,
@@ -470,23 +508,48 @@ function Login({ users, onLogin }) {
             </div>
           ))}
 
+          {needsPassword && (
+            <div style={{ marginBottom: 14 }}>
+              <div className="fd" style={{ fontSize: 13, fontWeight: 700, color: C.slate, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>
+                Password for {selected.name.split(" ")[0]}
+              </div>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => { setPassword(e.target.value); setError(""); }}
+                onKeyDown={(e) => { if (e.key === "Enter") handleContinue(); }}
+                placeholder="Enter password"
+                autoFocus
+                className="fb"
+                style={{
+                  width: "100%", padding: "10px 12px", borderRadius: 9,
+                  border: `1.5px solid ${error ? C.red || "#C0392B" : C.line}`,
+                  fontSize: 14, color: C.ink, boxSizing: "border-box",
+                }}
+              />
+              {error && (
+                <div className="fb" style={{ color: C.red || "#C0392B", fontSize: 12, marginTop: 6 }}>{error}</div>
+              )}
+            </div>
+          )}
+
           <button
-            disabled={!selected}
-            onClick={() => selected && onLogin(selected)}
+            disabled={!selected || checking}
+            onClick={handleContinue}
             className="fd"
             style={{
               width: "100%", padding: "12px 0", marginTop: 4, borderRadius: 9, border: "none",
-              background: selected ? C.orange : C.line, color: C.white, fontSize: 18, fontWeight: 700,
-              cursor: selected ? "pointer" : "not-allowed", letterSpacing: "0.02em",
+              background: selected && !checking ? C.orange : C.line, color: C.white, fontSize: 18, fontWeight: 700,
+              cursor: selected && !checking ? "pointer" : "not-allowed", letterSpacing: "0.02em",
             }}
           >
-            Continue{selected ? ` as ${selected.name.split(" ")[0]}` : ""}
+            {checking ? "Checking…" : `Continue${selected ? ` as ${selected.name.split(" ")[0]}` : ""}`}
           </button>
         </div>
 
         <p className="fb" style={{ color: C.slateLight, fontSize: 11, textAlign: "center", marginTop: 14, lineHeight: 1.5 }}>
-          Production builds swap this for real email/password or magic-link auth —
-          see Admin → Integrations for the free-tier swap-in path.
+          Customers use simple click-to-enter for now. Admin and technician
+          accounts require the password set up in Vercel — see README.md.
         </p>
       </div>
     </div>
@@ -1377,9 +1440,37 @@ export default function App() {
       if (!n) { n = []; }
 
       setUsers(u); setJobs(j); setSettings(s); setNotifications(n);
+
+      // Restore a signed-in admin/technician session, if one is saved and
+      // still valid. Verification happens server-side in /api/auth so a
+      // tampered localStorage entry can't grant access on its own.
+      const session = await storageGet("hasp_session", null);
+      if (session && session.userId && session.token) {
+        const valid = await verifySession(session.token);
+        if (valid) {
+          const sessionUser = u.find((x) => x.id === session.userId);
+          if (sessionUser) setCurrentUser(sessionUser);
+          else await storageSet("hasp_session", null);
+        } else {
+          await storageSet("hasp_session", null);
+        }
+      }
+
       setLoading(false);
     })();
   }, []);
+
+  async function handleLogin(user, token) {
+    setCurrentUser(user);
+    if (token) {
+      await storageSet("hasp_session", { userId: user.id, token });
+    }
+  }
+
+  async function handleLogout() {
+    setCurrentUser(null);
+    await storageSet("hasp_session", null);
+  }
 
   function notify(text) {
     const entry = { id: uid("note"), text, ts: new Date().toISOString() };
@@ -1443,7 +1534,7 @@ export default function App() {
     return (
       <>
         {FONTS}
-        <Login users={users} onLogin={setCurrentUser} />
+        <Login users={users} onLogin={handleLogin} />
       </>
     );
   }
@@ -1453,7 +1544,7 @@ export default function App() {
       {FONTS}
       <TopBar
         user={currentUser}
-        onLogout={() => setCurrentUser(null)}
+        onLogout={handleLogout}
         right={!settings.aiEnabled ? null : <Badge tone="amber">AI on</Badge>}
       />
       {currentUser.role === "customer" && (
