@@ -162,6 +162,17 @@ const STATUS_FLOW = ["requested", "scheduled", "en_route", "in_progress", "compl
 function uid(prefix = "id") {
   return `${prefix}_${Math.random().toString(36).slice(2, 9)}`;
 }
+// Generates a short, human-friendly property code for a new customer
+// (e.g. "HA-4821") and makes sure it doesn't collide with an existing one.
+function generatePropertyCode(existingUsers) {
+  const used = new Set(existingUsers.filter((u) => u.propertyCode).map((u) => u.propertyCode));
+  let code;
+  do {
+    const num = Math.floor(1000 + Math.random() * 9000);
+    code = `HA-${num}`;
+  } while (used.has(code));
+  return code;
+}
 function jobNumber(n) {
   return `WO-${1000 + n}`;
 }
@@ -206,9 +217,9 @@ function buildDemoUsers() {
     { id: "u_admin", role: "admin", name: "Adrian Washington", email: "adrian@honestabes.biz", phone: "(509) 370-4628", title: "Owner / Admin" },
     { id: "u_tech1", role: "technician", name: "Mike Ortiz", email: "mike@honestabes.biz", phone: "(509) 555-0132", title: "Lead Technician", skills: ["Appliance Repair", "HVAC", "Drywall"] },
     { id: "u_tech2", role: "technician", name: "Sarah Coleman", email: "sarah@honestabes.biz", phone: "(509) 555-0187", title: "Technician", skills: ["Painting", "Gutters", "Drywall"] },
-    { id: "u_cust1", role: "customer", name: "Jane Doe", email: "jane.doe@example.com", phone: "(509) 555-0111", address: "412 W Riverside Ave, Spokane, WA" },
-    { id: "u_cust2", role: "customer", name: "Robert Kim", email: "robert.kim@example.com", phone: "(509) 555-0122", address: "2210 N Monroe St, Spokane, WA" },
-    { id: "u_cust3", role: "customer", name: "Lisa Nguyen", email: "lisa.nguyen@example.com", phone: "(509) 555-0144", address: "9807 E Sprague Ave, Spokane Valley, WA" },
+    { id: "u_cust1", role: "customer", name: "Jane Doe", email: "jane.doe@example.com", phone: "(509) 555-0111", address: "412 W Riverside Ave, Spokane, WA", propertyCode: "HA-1001" },
+    { id: "u_cust2", role: "customer", name: "Robert Kim", email: "robert.kim@example.com", phone: "(509) 555-0122", address: "2210 N Monroe St, Spokane, WA", propertyCode: "HA-1002" },
+    { id: "u_cust3", role: "customer", name: "Lisa Nguyen", email: "lisa.nguyen@example.com", phone: "(509) 555-0144", address: "9807 E Sprague Ave, Spokane Valley, WA", propertyCode: "HA-1003" },
   ];
 }
 
@@ -427,11 +438,21 @@ const inputStyle = {
 /* -------------------------------------------------------------------------
    LOGIN
 ------------------------------------------------------------------------- */
-function Login({ users, onLogin }) {
+function Login({ users, onLogin, onSignup }) {
   const [selected, setSelected] = useState(null);
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [checking, setChecking] = useState(false);
+
+  // view: "select" (default account list) | "code" (returning customer,
+  // signing in with their property code) | "signup" (new customer form)
+  const [view, setView] = useState("select");
+  const [codeInput, setCodeInput] = useState("");
+  const [codeError, setCodeError] = useState("");
+  const [signupForm, setSignupForm] = useState({ name: "", phone: "", email: "", address: "" });
+  const [signupError, setSignupError] = useState("");
+  const [signupResult, setSignupResult] = useState(null); // the newly created customer, shown with their code
+
   const grouped = {
     admin: users.filter((u) => u.role === "admin"),
     technician: users.filter((u) => u.role === "technician"),
@@ -467,11 +488,74 @@ function Login({ users, onLogin }) {
     }
   }
 
+  function handleCodeSignIn() {
+    const code = codeInput.trim().toUpperCase();
+    if (!code) {
+      setCodeError("Enter your property code.");
+      return;
+    }
+    const match = users.find((u) => u.role === "customer" && (u.propertyCode || "").toUpperCase() === code);
+    if (!match) {
+      setCodeError("We couldn't find that property code. Double-check it, or sign up below if you're new.");
+      return;
+    }
+    setCodeError("");
+    onLogin(match, null);
+  }
+
+  async function handleSignupSubmit() {
+    const { name, phone, email, address } = signupForm;
+    if (!name.trim() || !phone.trim() || !address.trim()) {
+      setSignupError("Name, phone, and service address are required.");
+      return;
+    }
+    setSignupError("");
+    const newUser = await onSignup({ name: name.trim(), phone: phone.trim(), email: email.trim(), address: address.trim() });
+    setSignupResult(newUser);
+  }
+
+  // --- Confirmation screen shown right after signup, with the new property code ---
+  if (signupResult) {
+    return (
+      <div className="fb" style={{ minHeight: "100vh", background: C.ink, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+        <div style={{ width: "100%", maxWidth: 440 }}>
+          <div style={{ background: C.paper, borderRadius: 14, padding: 24, boxShadow: "0 12px 40px rgba(0,0,0,0.35)", textAlign: "center" }}>
+            <div className="stamp" style={{ color: C.orange, fontSize: 13, marginBottom: 10 }}>Welcome to Honest Abes</div>
+            <h2 className="fd" style={{ fontSize: 22, fontWeight: 800, color: C.ink, margin: "0 0 14px" }}>
+              You're all set, {signupResult.name.split(" ")[0]}!
+            </h2>
+            <p style={{ fontSize: 13.5, color: C.slate, marginBottom: 6 }}>Your property code is</p>
+            <div className="fd" style={{
+              fontSize: 30, fontWeight: 800, letterSpacing: "0.06em", color: C.orange,
+              background: "#FBE6DA", borderRadius: 10, padding: "12px 0", marginBottom: 14,
+            }}>
+              {signupResult.propertyCode}
+            </div>
+            <p style={{ fontSize: 12.5, color: C.slate, marginBottom: 20, lineHeight: 1.5 }}>
+              Save this code — it's how you'll sign back in next time, no password needed.
+              You can also always find it in your account once you're signed in.
+            </p>
+            <button
+              onClick={() => onLogin(signupResult, null)}
+              className="fd"
+              style={{
+                width: "100%", padding: "12px 0", borderRadius: 9, border: "none",
+                background: C.orange, color: C.white, fontSize: 16, fontWeight: 700, cursor: "pointer",
+              }}
+            >
+              Continue to my account
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="fb" style={{ minHeight: "100vh", background: C.ink, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <div style={{ width: "100%", maxWidth: 440 }}>
         <div style={{ textAlign: "center", marginBottom: 28 }}>
-          <div className="stamp" style={{ color: C.orange, fontSize: 13, marginBottom: 10 }}>Admin &amp; Technician Sign-In Required</div>
+          <div className="stamp" style={{ color: C.orange, fontSize: 13, marginBottom: 10 }}>Sign In or Sign Up</div>
           <h1 className="fd" style={{ color: C.paper, fontSize: 40, fontWeight: 800, margin: "6px 0 2px", lineHeight: 1 }}>
             Honest Abes
           </h1>
@@ -481,7 +565,93 @@ function Login({ users, onLogin }) {
         </div>
 
         <div style={{ background: C.paper, borderRadius: 14, padding: 18, boxShadow: "0 12px 40px rgba(0,0,0,0.35)" }}>
-          {["customer", "technician", "admin"].map((role) => (
+          {view === "code" && (
+            <div style={{ marginBottom: 16 }}>
+              <div className="fd" style={{ fontSize: 13, fontWeight: 700, color: C.slate, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>
+                Sign in with your property code
+              </div>
+              <input
+                type="text"
+                value={codeInput}
+                onChange={(e) => { setCodeInput(e.target.value); setCodeError(""); }}
+                onKeyDown={(e) => { if (e.key === "Enter") handleCodeSignIn(); }}
+                placeholder="e.g. HA-4821"
+                autoFocus
+                className="fb"
+                style={{
+                  width: "100%", padding: "10px 12px", borderRadius: 9,
+                  border: `1.5px solid ${codeError ? C.red || "#C0392B" : C.line}`,
+                  fontSize: 14, color: C.ink, boxSizing: "border-box", marginBottom: 8,
+                }}
+              />
+              {codeError && <div className="fb" style={{ color: C.red || "#C0392B", fontSize: 12, marginBottom: 8 }}>{codeError}</div>}
+              <button
+                onClick={handleCodeSignIn}
+                className="fd"
+                style={{
+                  width: "100%", padding: "11px 0", borderRadius: 9, border: "none",
+                  background: C.orange, color: C.white, fontSize: 15, fontWeight: 700, cursor: "pointer", marginBottom: 8,
+                }}
+              >
+                Sign in
+              </button>
+              <button
+                onClick={() => { setView("select"); setCodeError(""); setCodeInput(""); }}
+                className="fb"
+                style={{ width: "100%", padding: "6px 0", background: "transparent", border: "none", color: C.slate, fontSize: 12.5, cursor: "pointer", textDecoration: "underline" }}
+              >
+                Back
+              </button>
+            </div>
+          )}
+
+          {view === "signup" && (
+            <div style={{ marginBottom: 16 }}>
+              <div className="fd" style={{ fontSize: 13, fontWeight: 700, color: C.slate, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>
+                New customer sign-up
+              </div>
+              {[
+                ["name", "Full name"],
+                ["phone", "Phone number"],
+                ["email", "Email (optional)"],
+                ["address", "Service address"],
+              ].map(([field, label]) => (
+                <input
+                  key={field}
+                  type="text"
+                  value={signupForm[field]}
+                  onChange={(e) => setSignupForm((f) => ({ ...f, [field]: e.target.value }))}
+                  placeholder={label}
+                  className="fb"
+                  style={{
+                    width: "100%", padding: "10px 12px", borderRadius: 9,
+                    border: `1.5px solid ${C.line}`, fontSize: 14, color: C.ink,
+                    boxSizing: "border-box", marginBottom: 8,
+                  }}
+                />
+              ))}
+              {signupError && <div className="fb" style={{ color: C.red || "#C0392B", fontSize: 12, marginBottom: 8 }}>{signupError}</div>}
+              <button
+                onClick={handleSignupSubmit}
+                className="fd"
+                style={{
+                  width: "100%", padding: "11px 0", borderRadius: 9, border: "none",
+                  background: C.orange, color: C.white, fontSize: 15, fontWeight: 700, cursor: "pointer", marginBottom: 8,
+                }}
+              >
+                Create my account
+              </button>
+              <button
+                onClick={() => { setView("select"); setSignupError(""); }}
+                className="fb"
+                style={{ width: "100%", padding: "6px 0", background: "transparent", border: "none", color: C.slate, fontSize: 12.5, cursor: "pointer", textDecoration: "underline" }}
+              >
+                Back
+              </button>
+            </div>
+          )}
+
+          {view === "select" && ["customer", "technician", "admin"].map((role) => (
             <div key={role} style={{ marginBottom: 16 }}>
               <div className="fd" style={{ fontSize: 13, fontWeight: 700, color: C.slate, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>
                 {role === "admin" ? "Owner / Admin" : role}
@@ -505,10 +675,28 @@ function Login({ users, onLogin }) {
                   </button>
                 ))}
               </div>
+              {role === "customer" && (
+                <div style={{ display: "flex", gap: 14, marginTop: 8 }}>
+                  <button
+                    onClick={() => setView("code")}
+                    className="fb"
+                    style={{ background: "transparent", border: "none", color: C.orange, fontSize: 12.5, fontWeight: 600, cursor: "pointer", padding: 0 }}
+                  >
+                    Have a property code? Sign in
+                  </button>
+                  <button
+                    onClick={() => setView("signup")}
+                    className="fb"
+                    style={{ background: "transparent", border: "none", color: C.orange, fontSize: 12.5, fontWeight: 600, cursor: "pointer", padding: 0 }}
+                  >
+                    New customer? Sign up
+                  </button>
+                </div>
+              )}
             </div>
           ))}
 
-          {needsPassword && (
+          {view === "select" && needsPassword && (
             <div style={{ marginBottom: 14 }}>
               <div className="fd" style={{ fontSize: 13, fontWeight: 700, color: C.slate, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>
                 Password for {selected.name.split(" ")[0]}
@@ -533,23 +721,26 @@ function Login({ users, onLogin }) {
             </div>
           )}
 
-          <button
-            disabled={!selected || checking}
-            onClick={handleContinue}
-            className="fd"
-            style={{
-              width: "100%", padding: "12px 0", marginTop: 4, borderRadius: 9, border: "none",
-              background: selected && !checking ? C.orange : C.line, color: C.white, fontSize: 18, fontWeight: 700,
-              cursor: selected && !checking ? "pointer" : "not-allowed", letterSpacing: "0.02em",
-            }}
-          >
-            {checking ? "Checking…" : `Continue${selected ? ` as ${selected.name.split(" ")[0]}` : ""}`}
-          </button>
+          {view === "select" && (
+            <button
+              disabled={!selected || checking}
+              onClick={handleContinue}
+              className="fd"
+              style={{
+                width: "100%", padding: "12px 0", marginTop: 4, borderRadius: 9, border: "none",
+                background: selected && !checking ? C.orange : C.line, color: C.white, fontSize: 18, fontWeight: 700,
+                cursor: selected && !checking ? "pointer" : "not-allowed", letterSpacing: "0.02em",
+              }}
+            >
+              {checking ? "Checking…" : `Continue${selected ? ` as ${selected.name.split(" ")[0]}` : ""}`}
+            </button>
+          )}
         </div>
 
         <p className="fb" style={{ color: C.slateLight, fontSize: 11, textAlign: "center", marginTop: 14, lineHeight: 1.5 }}>
-          Customers use simple click-to-enter for now. Admin and technician
-          accounts require the password set up in Vercel — see README.md.
+          New customers can sign up above for a property code — no password
+          needed. Admin and technician accounts require the password set up
+          in Vercel — see README.md.
         </p>
       </div>
     </div>
@@ -1041,6 +1232,11 @@ function CustomerView({ user, users, jobs, settings, onUpdateJob, onCreateJob, o
         <div>
           <h1 className="fd" style={{ fontSize: 30, fontWeight: 800, color: C.ink, margin: 0 }}>Welcome, {user.name.split(" ")[0]}</h1>
           <p style={{ color: C.slate, fontSize: 13.5, margin: "3px 0 0" }}>{user.address}</p>
+          {user.propertyCode && (
+            <p style={{ color: C.slateLight, fontSize: 12, margin: "3px 0 0" }}>
+              Property code: <span style={{ fontWeight: 700, color: C.slate }}>{user.propertyCode}</span>
+            </p>
+          )}
         </div>
         <button onClick={() => setShowRequest(true)} className="fd" style={{
           background: C.orange, color: C.white, border: "none", borderRadius: 9,
@@ -1373,6 +1569,11 @@ function AdminView({ user, users, jobs, settings, notifications, onUpdateJob, on
                     <div className="fd" style={{ fontWeight: 700, fontSize: 16 }}>{c.name}</div>
                     <div style={{ fontSize: 12.5, color: C.slate }}>{c.address}</div>
                     <div style={{ fontSize: 12.5, color: C.slate }}>{c.phone} · {c.email}</div>
+                    {c.propertyCode && (
+                      <div style={{ fontSize: 12, color: C.slateLight, marginTop: 2 }}>
+                        Property code: <span style={{ fontWeight: 700 }}>{c.propertyCode}</span>
+                      </div>
+                    )}
                   </div>
                   <Badge>{count} job{count === 1 ? "" : "s"}</Badge>
                 </div>
@@ -1467,6 +1668,22 @@ export default function App() {
     }
   }
 
+  // Creates a new customer account with an auto-generated property code.
+  // No password/session token involved — the property code itself is what
+  // they use to sign back in later (matched client-side against users).
+  async function handleCustomerSignup({ name, phone, email, address }) {
+    const newUser = {
+      id: uid("u_cust"),
+      role: "customer",
+      name, phone, email, address,
+      propertyCode: generatePropertyCode(users),
+    };
+    const next = [...users, newUser];
+    setUsers(next);
+    await storageSet("hasp_users", next);
+    return newUser;
+  }
+
   async function handleLogout() {
     setCurrentUser(null);
     await storageSet("hasp_session", null);
@@ -1534,7 +1751,7 @@ export default function App() {
     return (
       <>
         {FONTS}
-        <Login users={users} onLogin={handleLogin} />
+        <Login users={users} onLogin={handleLogin} onSignup={handleCustomerSignup} />
       </>
     );
   }
